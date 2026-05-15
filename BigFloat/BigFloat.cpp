@@ -233,33 +233,76 @@ int BigFloat::compareAbs(const BigFloat& other) const {
     return 0;
 }
 
+static void alignAndCopy(
+    const std::vector<char>& a_int, const std::vector<char>& a_frac,
+    const std::vector<char>& b_int, const std::vector<char>& b_frac,
+    std::vector<char>& out_int1, std::vector<char>& out_frac1,
+    std::vector<char>& out_int2, std::vector<char>& out_frac2,
+    size_t& max_frac, size_t& max_int)
+{
+    max_frac = std::max(a_frac.size(), b_frac.size());
+    out_frac1 = a_frac; out_frac1.resize(max_frac, 0);
+    out_frac2 = b_frac; out_frac2.resize(max_frac, 0);
+
+    max_int = std::max(a_int.size(), b_int.size());
+    out_int1 = a_int; out_int2 = b_int;
+    out_int1.insert(out_int1.begin(), max_int - out_int1.size(), 0);
+    out_int2.insert(out_int2.begin(), max_int - out_int2.size(), 0);
+}
+
+static void normalizeResult(std::vector<char>& integer, std::vector<char>& fractional) {
+    while (integer.size() > 1 && integer.front() == 0) integer.erase(integer.begin());
+    while (!fractional.empty() && fractional.back() == 0) fractional.pop_back();
+}
+
+static void digitwiseAdd(const std::vector<char>& a, const std::vector<char>& b,
+                         std::vector<char>& res, int& carry) {
+    size_t n = a.size();
+    res.assign(n, 0);
+    carry = 0;
+    for (size_t i = n; i-- > 0; ) {
+        int sum = a[i] + b[i] + carry;
+        res[i] = sum % 10;
+        carry = sum / 10;
+    }
+}
+
+static void digitwiseSub(const std::vector<char>& a, const std::vector<char>& b,
+                         std::vector<char>& res, int& borrow) {
+    size_t n = a.size();
+    res.assign(n, 0);
+    borrow = 0;
+    for (size_t i = n; i-- > 0; ) {
+        int diff = a[i] - b[i] - borrow;
+        if (diff < 0) {
+            diff += 10;
+            borrow = 1;
+        } else {
+            borrow = 0;
+        }
+        res[i] = diff;
+    }
+}
+
 BigFloat BigFloat::addAbs(const BigFloat& a, const BigFloat& b) const {
     BigFloat res;
     res.sign_ = true;
-    size_t max_frac = std::max(a.fractional_.size(), b.fractional_.size());
-    std::vector<char> frac1 = a.fractional_, frac2 = b.fractional_;
-    frac1.resize(max_frac, 0);
-    frac2.resize(max_frac, 0);
-    int carry = 0;
-    std::vector<char> new_frac(max_frac, 0);
-    for (size_t i = max_frac; i-- > 0; ) {
-        int sum = frac1[i] + frac2[i] + carry;
-        new_frac[i] = sum % 10;
-        carry = sum / 10;
-    }
-    size_t max_int = std::max(a.integer_.size(), b.integer_.size());
-    std::vector<char> int1 = a.integer_, int2 = b.integer_;
-    int1.insert(int1.begin(), max_int - int1.size(), 0);
-    int2.insert(int2.begin(), max_int - int2.size(), 0);
-    std::vector<char> new_int(max_int, 0);
-    for (size_t i = max_int; i-- > 0; ) {
-        int sum = int1[i] + int2[i] + carry;
-        new_int[i] = sum % 10;
-        carry = sum / 10;
-    }
+
+    std::vector<char> int1, int2, frac1, frac2;
+    size_t max_frac, max_int;
+    alignAndCopy(a.integer_, a.fractional_, b.integer_, b.fractional_,
+                 int1, frac1, int2, frac2, max_frac, max_int);
+
+    int carry;
+    std::vector<char> new_frac;
+    digitwiseAdd(frac1, frac2, new_frac, carry);
+
+    std::vector<char> new_int;
+    digitwiseAdd(int1, int2, new_int, carry);
+
     if (carry) new_int.insert(new_int.begin(), static_cast<char>(carry));
-    while (new_int.size() > 1 && new_int[0] == 0) new_int.erase(new_int.begin());
-    while (!new_frac.empty() && new_frac.back() == 0) new_frac.pop_back();
+    normalizeResult(new_int, new_frac);
+
     res.integer_ = std::move(new_int);
     res.fractional_ = std::move(new_frac);
     return res;
@@ -268,31 +311,20 @@ BigFloat BigFloat::addAbs(const BigFloat& a, const BigFloat& b) const {
 BigFloat BigFloat::subAbs(const BigFloat& a, const BigFloat& b) const {
     BigFloat res;
     res.sign_ = true;
-    size_t max_frac = std::max(a.fractional_.size(), b.fractional_.size());
-    std::vector<char> frac1 = a.fractional_, frac2 = b.fractional_;
-    frac1.resize(max_frac, 0);
-    frac2.resize(max_frac, 0);
-    int borrow = 0;
-    std::vector<char> new_frac(max_frac, 0);
-    for (size_t i = max_frac; i-- > 0; ) {
-        int diff = frac1[i] - frac2[i] - borrow;
-        if (diff < 0) { diff += 10; borrow = 1; }
-        else borrow = 0;
-        new_frac[i] = static_cast<char>(diff);
-    }
-    size_t max_int = std::max(a.integer_.size(), b.integer_.size());
-    std::vector<char> int1 = a.integer_, int2 = b.integer_;
-    int1.insert(int1.begin(), max_int - int1.size(), 0);
-    int2.insert(int2.begin(), max_int - int2.size(), 0);
-    std::vector<char> new_int(max_int, 0);
-    for (size_t i = max_int; i-- > 0; ) {
-        int diff = int1[i] - int2[i] - borrow;
-        if (diff < 0) { diff += 10; borrow = 1; }
-        else borrow = 0;
-        new_int[i] = static_cast<char>(diff);
-    }
-    while (new_int.size() > 1 && new_int[0] == 0) new_int.erase(new_int.begin());
-    while (!new_frac.empty() && new_frac.back() == 0) new_frac.pop_back();
+
+    std::vector<char> int1, int2, frac1, frac2;
+    size_t max_frac, max_int;
+    alignAndCopy(a.integer_, a.fractional_, b.integer_, b.fractional_,
+                 int1, frac1, int2, frac2, max_frac, max_int);
+
+    int borrow;
+    std::vector<char> new_frac;
+    digitwiseSub(frac1, frac2, new_frac, borrow);
+
+    std::vector<char> new_int;
+    digitwiseSub(int1, int2, new_int, borrow);
+
+    normalizeResult(new_int, new_frac);
     res.integer_ = std::move(new_int);
     res.fractional_ = std::move(new_frac);
     return res;
@@ -302,6 +334,7 @@ void BigFloat::removeLeadingZeros() {
     while (integer_.size() > 1 && integer_[0] == 0) integer_.erase(integer_.begin());
     if (integer_.empty()) integer_.push_back(0);
 }
+
 void BigFloat::removeTrailingZeros() {
     while (!fractional_.empty() && fractional_.back() == 0) fractional_.pop_back();
 }
@@ -462,6 +495,26 @@ BigFloat BigFloat::reciprocal(const BigFloat& x, size_t precision) {
     return r;
 }
 
+void BigFloat::normalizeDivisor(const BigFloat& b, BigFloat& b_norm, int& shift_b) {
+    b_norm = b;
+    shift_b = 0;
+    while (b_norm.integer_.size() > 1 || (b_norm.integer_.size() == 1 && b_norm.integer_[0] >= 10)) {
+        char last_int = b_norm.integer_.back();
+        b_norm.integer_.pop_back();
+        if (b_norm.integer_.empty()) b_norm.integer_.push_back(0);
+        b_norm.fractional_.insert(b_norm.fractional_.begin(), last_int);
+        ++shift_b;
+        b_norm.normalize();
+    }
+    while (b_norm.integer_.size() == 1 && b_norm.integer_[0] == 0 && !b_norm.fractional_.empty()) {
+        char first_frac = b_norm.fractional_.front();
+        b_norm.fractional_.erase(b_norm.fractional_.begin());
+        b_norm.integer_[0] = first_frac;
+        --shift_b;
+        b_norm.normalize();
+    }
+}
+
 BigFloat BigFloat::operator/(const BigFloat& other) const {
     if (other.isZero()) throw std::runtime_error("Division by zero");
     if (isZero()) return BigFloat("0");
@@ -470,23 +523,9 @@ BigFloat BigFloat::operator/(const BigFloat& other) const {
     BigFloat a = this->abs();
     BigFloat b = other.abs();
 
-    int shift_b = 0;
-    BigFloat b_norm = b;
-    while (b_norm.integer_.size() > 1 || (b_norm.integer_.size() == 1 && b_norm.integer_[0] >= 10)) {
-        char last_int = b_norm.integer_.back();
-        b_norm.integer_.pop_back();
-        if (b_norm.integer_.empty()) b_norm.integer_.push_back(0);
-        b_norm.fractional_.insert(b_norm.fractional_.begin(), last_int);
-        shift_b++;
-        b_norm.normalize();
-    }
-    while (b_norm.integer_.size() == 1 && b_norm.integer_[0] == 0 && !b_norm.fractional_.empty()) {
-        char first_frac = b_norm.fractional_.front();
-        b_norm.fractional_.erase(b_norm.fractional_.begin());
-        b_norm.integer_[0] = first_frac;
-        shift_b--;
-        b_norm.normalize();
-    }
+    BigFloat b_norm;
+    int shift_b;
+    normalizeDivisor(b, b_norm, shift_b);
 
     size_t total_digits = a.integer_.size() + a.fractional_.size() + b.integer_.size() + b.fractional_.size();
     size_t precision = total_digits * 2 + DIVISION_PRECISION_EXTRA;
@@ -503,36 +542,23 @@ BigFloat BigFloat::operator/(const BigFloat& other) const {
     return quotient;
 }
 
-BigFloat BigFloat::sqrt() const {
-    if (!sign_) throw std::runtime_error("Square root of negative number");
-    if (isZero()) return BigFloat("0");
-
-    BigFloat x = *this;
-    int exponent = 0;
-
+void BigFloat::normalizeForSqrt(BigFloat& x, int& exponent) {
+    exponent = 0;
     while (x < BigFloat("1")) {
         x = x.shift(1);
-        exponent--;
+        --exponent;
     }
     while (x >= BigFloat("100")) {
         x = x.shift(-1);
-        exponent++;
+        ++exponent;
     }
     if (exponent % 2 != 0) {
         x = x.shift(-1);
-        exponent++;
+        ++exponent;
     }
+}
 
-    size_t total_digits = integer_.size() + fractional_.size();
-    size_t target_prec = total_digits * 2 + 30;
-    if (target_prec < 30) target_prec = 30;
-    size_t working_prec = target_prec + 10;
-
-    std::string xs = x.toString();
-    if (xs.size() > 16) xs = xs.substr(0, 16);
-    long double init_val = std::sqrt(std::stold(xs));
-    BigFloat y(init_val);
-
+BigFloat BigFloat::newtonSqrtIteration(const BigFloat& x, BigFloat y, size_t target_prec, size_t working_prec) {
     size_t current_prec = 15;
     BigFloat two("2");
     while (current_prec < target_prec) {
@@ -544,6 +570,28 @@ BigFloat BigFloat::sqrt() const {
         if (current_prec > working_prec) current_prec = working_prec;
         y.round(current_prec);
     }
+    return y;
+}
+
+BigFloat BigFloat::sqrt() const {
+    if (!sign_) throw std::runtime_error("Square root of negative number");
+    if (isZero()) return BigFloat("0");
+
+    BigFloat x = *this;
+    int exponent;
+    normalizeForSqrt(x, exponent);
+
+    size_t total_digits = integer_.size() + fractional_.size();
+    size_t target_prec = total_digits * 2 + 30;
+    if (target_prec < 30) target_prec = 30;
+    size_t working_prec = target_prec + 10;
+
+    std::string xs = x.toString();
+    if (xs.size() > 16) xs = xs.substr(0, 16);
+    long double init_val = std::sqrt(std::stold(xs));
+    BigFloat y(init_val);
+
+    y = newtonSqrtIteration(x, y, target_prec, working_prec);
 
     int shift_half = exponent / 2;
     if (shift_half != 0) y = y.shift(shift_half);
@@ -555,6 +603,7 @@ std::ostream& operator<<(std::ostream& os, const BigFloat& num) {
     os << num.toString();
     return os;
 }
+
 std::istream& operator>>(std::istream& is, BigFloat& num) {
     std::string str;
     is >> str;

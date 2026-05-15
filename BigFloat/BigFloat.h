@@ -54,6 +54,10 @@ private:
     void removeTrailingZeros();
 
     static BigFloat reciprocal(const BigFloat& x, size_t precision);
+
+    static void normalizeDivisor(const BigFloat& b, BigFloat& b_norm, int& shift_b);
+    static void normalizeForSqrt(BigFloat& x, int& exponent);
+    static BigFloat newtonSqrtIteration(const BigFloat& x, BigFloat y, size_t target_prec, size_t working_prec);
 };
 
 #endif
